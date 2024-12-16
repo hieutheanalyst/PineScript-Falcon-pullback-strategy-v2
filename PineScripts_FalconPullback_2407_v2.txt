@@ -1,0 +1,173 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © tradingforaliving34 // hieu.analyst@gmail.com
+//@version=5
+strategy("Falcon Pullback", overlay=true, initial_capital = 1000000, default_qty_type = strategy.percent_of_equity, default_qty_value = 100, commission_type = strategy.commission.percent, commission_value = 0.15)
+
+// Parameters
+ema20Length = input.int(defval = 20, title = "Short EMA", group = "EMA")
+ema50Length = input.int(defval = 50, title = "Long EMA", group = "EMA")
+margin = input.float(defval = 2, title = "EMA margin (%)", group = "EMA")/100 // Define the margin for price touching the MA lines
+stochasticKLength = input.int(defval = 5, title = "%K Periods", group = "Stochastic")
+stochasticSmoothK = input.int(defval = 3, title = "%K Smooth", group = "Stochastic")
+stochasticDLength = input.int(defval = 3, title = "%D Periods", group = "Stochastic")
+
+// RSI
+rsiLength = input.int(defval = 14, title = "Chu kỳ RSI", group = "RSI")
+
+// Calculate Moving Averages
+ema20 = ta.sma(close, ema20Length)
+ema50 = ta.sma(close, ema50Length)
+ema100 = ta.sma(close, 100)
+ema200 = ta.sma(close, 200)
+highBand20 = ema20 + margin*ema20
+lowBand20 = ema20 - margin*ema20
+highBand50 = ema50 + margin*ema50
+lowBand50 = ema50 - margin*ema50
+
+// Plot EMAs
+plot(ema20, color=color.blue, title="EMA 20")
+plot(ema50, color=color.red, title="EMA 50")
+plot(ema100, color=color.orange, title="EMA 100")
+plot(ema200, color=color.black, title="EMA 200")
+p1 = plot(highBand20, color=color.blue, title="EMA20", display = display.none)
+p2 = plot(lowBand20, color=color.blue, title="EMA20", display = display.none)
+p3 = plot(highBand50, color=#f321216a, title="EMA50", display = display.none)
+p4 = plot(lowBand50, color=#f321216a, title="EMA50", display = display.none)
+fill(p1, p2, title = "EMA20 Margin", color=#21a3f36a)
+fill(p3, p4, title = "EMA50 Margin", color=#f321216a)
+
+// Calculate Stochastic Oscillator
+k = ta.stoch(close, high, low, stochasticKLength)
+smooth_k = ta.sma(k, stochasticSmoothK)
+d = ta.sma(smooth_k,stochasticDLength)
+
+// Calculate RSI
+rsi = ta.rsi(close, rsiLength)
+
+// Conditions for MA 
+upTrend = ema20 > ema50 and ema50 > ema200
+// Conditions for price touching MA20 or MA50 within +/-2%
+priceTouchesMA20 = close >= lowBand20 and close <= highBand20
+priceTouchesMA50 = close >= lowBand50 and close <= highBand50
+// Conditions for Stochastic in oversold area
+stochasticOversold = smooth_k < 30
+// Conditions for RSI above 40
+rsiAbove40 = rsi > 40
+
+// Candlestick Features
+Body = math.abs(close - open)
+WhiteBody = open < close
+BlackBody = open > close
+BodyAvg = ta.ema(Body, 14)
+patternLabelPosLow = low - 0.5*(ta.atr(30))
+
+// Inputs for Patterns
+BullishEngulfingInput = input(title="Bullish Engulfing", defval=true, group = "Candle Patterns")
+BullishHaramiInput = input(title="Bullish Harami", defval=true, group = "Candle Patterns")
+BullishKickingInput = input(title="Bullish Kicking", defval=true, group = "Candle Patterns")
+BullishHammerInput = input(title="Bullish Hammer", defval=true, group = "Candle Patterns")
+BullishPiercingInput = input(title="Bullish Piercing Line", defval=true, group = "Candle Patterns")
+OneWhiteSoldierInput = input(title="One White Soldier", defval=true, group = "Candle Patterns")
+MorningStarInput = input(title="Morning Star", defval=true, group = "Candle Patterns")
+
+EngulfingBullish = BlackBody[1] and WhiteBody and close > open[1] and open < close[1]
+HaramiBullish = BlackBody[1] and WhiteBody and high <= high[1] and low >= low[1]
+KickingBullish = BlackBody[1] and WhiteBody and open > open[1]
+HammerBullish = WhiteBody and (high - low) > 2*Body and close > 0.995*high 
+PiercingBullish = BlackBody[1] and WhiteBody and open < low[1] and close > (open[1] + close[1]) / 2
+OneWhiteSoldier = BlackBody[1] and WhiteBody and close > open[1]
+MorningStar = BlackBody[2] and WhiteBody and open > math.max(open[1], close[1])
+
+// Candle pattern condition
+candleCondition = EngulfingBullish or HaramiBullish or KickingBullish or HammerBullish or PiercingBullish or OneWhiteSoldier or MorningStar
+// Candle label color
+label_color_bullish = input(#3dd73d, "Label Color Bullish", group = "Candle Patterns")
+
+// Stop and target
+atrLength = input.int(defval = 60, title = "ATR Length", tooltip = "ATR length to calculate stop-loss price", group = "SL/TP")
+atrMult = input.float(defval = 1, title = "ATR Multiplier", tooltip = "ATR Multiplier to calculate stop-loss price", group = "SL/TP")
+rr = input.float(defval = 2, title = "R:R Ratio", tooltip = "Reward to Risk Ratio to calculate take-profit price", group = "SL/TP")
+atr = ta.atr(atrLength)
+stopSize = atr * atrMult
+stopPrice = ta.lowest(source = low, length = 2)
+stopDistance = close - stopPrice
+targetPrice = close + (stopDistance * rr)
+
+// Buy condition
+buyCondition = upTrend and (priceTouchesMA20 or priceTouchesMA50) and candleCondition and rsiAbove40
+
+// Check if in a trade or not
+var bool inPosition = false
+// Enter long position and set inPosition to true
+if (buyCondition and inPosition == false)
+    inPosition := true
+
+// Line plotting
+var float inPositionBuyPrice = na
+var float inPositionStopPrice = na
+var float inPositionTargetPrice = na
+
+if buyCondition == true and inPosition[1] == false
+    inPositionBuyPrice := close
+    inPositionStopPrice := stopPrice
+    inPositionTargetPrice := targetPrice
+
+// Sell condition
+sellCondition = (close > inPositionTargetPrice[1]) or (close < inPositionStopPrice[1])
+
+// Exit long position and set inPosition to false
+if (sellCondition and inPosition)
+    inPosition := false
+
+// if sellCondition == true and inPosition[1] == true
+//     if close > inPositionTargetPrice[1]
+//         alert(message = "Take Profit for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+//     if close < inPositionStopPrice[1]
+//         alert(message = "Stop Loss for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+    inPositionBuyPrice := na
+    inPositionStopPrice := na
+    inPositionTargetPrice := na
+            
+
+plot(inPositionBuyPrice, "Buy Price", color.blue, style=plot.style_linebr, linewidth = 2)
+plot(inPositionStopPrice, "Stop Price", color.red, style=plot.style_linebr, linewidth = 2)
+plot(inPositionTargetPrice, "Target Price", color.green, style=plot.style_linebr, linewidth = 2)
+
+// Buy plotting
+if buyCondition and inPosition[1] == false
+    if MorningStar and MorningStarInput
+        label.new(bar_index, patternLabelPosLow, text="Ms", style=label.style_label_up, color=label_color_bullish, textcolor=color.white, tooltip="Morning Star")
+        alert(message = "Morning Star Pattern Signal for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+    else if EngulfingBullish and BullishEngulfingInput
+        label.new(bar_index, patternLabelPosLow, text="Eg", style=label.style_label_up, color=label_color_bullish, textcolor=color.white, tooltip="Bullish Engulfing")
+        //alert(message = "Engulfing Pattern Signal for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+    // Bullish Harami
+    else if HaramiBullish and BullishHaramiInput
+        label.new(bar_index, patternLabelPosLow, text="Hr", style=label.style_label_up, color=label_color_bullish, textcolor=color.white, tooltip="Bullish Harami")
+        //alert(message = "Bullish Harami Pattern Signal for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+    // Bullish Kicking
+    else if KickingBullish and BullishKickingInput
+        label.new(bar_index, patternLabelPosLow, text="Kk", style=label.style_label_up, color=label_color_bullish, textcolor=color.white, tooltip="Bullish Kicking")
+        //alert(message = "Kicking Pattern Signal for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+    // Bullish Piercing Line
+    else if PiercingBullish and BullishPiercingInput
+        label.new(bar_index, patternLabelPosLow, text="Pc", style=label.style_label_up, color=label_color_bullish, textcolor=color.white, tooltip="Bullish Piercing Line")
+        //alert(message = "Piercing Pattern Signal for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+    else if OneWhiteSoldier and OneWhiteSoldierInput
+        label.new(bar_index, patternLabelPosLow, text="Ows", style=label.style_label_up, color=label_color_bullish, textcolor=color.white, tooltip="One White Soldier")
+        //alert(message = "One White Soldier Pattern Signal for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+    // Bullish Hammer
+    else if HammerBullish and BullishHammerInput
+        label.new(bar_index, patternLabelPosLow, text="Hm", style=label.style_label_up, color=label_color_bullish, textcolor=color.white, tooltip="Bullish Hammer")
+        //alert(message = "Bullish Hammer Pattern Signal for {{ticker}}" , freq = alert.freq_once_per_bar_close)
+// Sell plotting
+plotshape(series=(sellCondition and inPosition[1] == true), location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small, title="Sell Signal")
+
+// Enter positions
+isBacktest = input.bool(title = "Backtest?", defval = false, group = "Backtest", tooltip = "Do you want to backtest the strategy?")
+if isBacktest
+    if buyCondition and strategy.position_size == 0
+        strategy.entry(id="Long", direction=strategy.long, comment = "Buy")
+    // Exit positions
+    if sellCondition and strategy.position_size > 0
+        strategy.close(id = "Long", comment = "Exit")
